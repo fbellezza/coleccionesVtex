@@ -34,87 +34,112 @@ app.get("/api/inspect", async (req, res) => {
   }
 
   try {
-    const pageSize = 50;
-    const from = (Number(page) - 1) * pageSize;
-    const to = from + pageSize - 1;
+    // 1. Search products by cluster - Fetch all products (up to 500)
+    let allProducts: any[] = [];
+    let from = 0;
+    let to = 49;
+    let totalCount = 0;
 
-    // 1. Search products by cluster
-    const searchUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/catalog_system/pub/products/search?fq=productClusterIds:${clusterId}&_from=${from}&_to=${to}`;
+    const firstSearchUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/catalog_system/pub/products/search?fq=productClusterIds:${clusterId}&_from=${from}&_to=${to}`;
+    const firstResponse = await fetch(firstSearchUrl, { headers: vtexHeaders });
     
-    const searchResponse = await fetch(searchUrl, { headers: vtexHeaders });
-    if (!searchResponse.ok) {
-      const errorText = await searchResponse.text();
-      throw new Error(`VTEX Search API error: ${searchResponse.status} - ${errorText}`);
+    if (!firstResponse.ok) {
+      const errorText = await firstResponse.text();
+      throw new Error(`VTEX Search API error: ${firstResponse.status} - ${errorText}`);
     }
 
-    const products = await searchResponse.json() as any[];
-    
-    // Get total count from headers if available
-    const resourcesHeader = searchResponse.headers.get("resources") || "";
-    const totalCount = parseInt(resourcesHeader.split("/")[1]) || products.length;
+    const firstBatch = await firstResponse.json() as any[];
+    allProducts = [...firstBatch];
+
+    const resourcesHeader = firstResponse.headers.get("resources") || "";
+    totalCount = parseInt(resourcesHeader.split("/")[1]) || allProducts.length;
+
+    // Fetch remaining products if any (limit to 500 total for performance)
+    const maxProducts = 500;
+    const effectiveTotal = Math.min(totalCount, maxProducts);
+
+    while (allProducts.length < effectiveTotal) {
+      from = allProducts.length;
+      to = Math.min(from + 49, effectiveTotal - 1);
+      
+      const nextUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/catalog_system/pub/products/search?fq=productClusterIds:${clusterId}&_from=${from}&_to=${to}`;
+      const nextResponse = await fetch(nextUrl, { headers: vtexHeaders });
+      
+      if (nextResponse.ok) {
+        const nextBatch = await nextResponse.json() as any[];
+        allProducts = [...allProducts, ...nextBatch];
+      } else {
+        break; // Stop if error
+      }
+    }
 
     // 2. For each product, fetch price and inventory for the first SKU
-    const auditedProducts = await Promise.all(
-      products.map(async (product) => {
-        const firstItem = product.items[0];
-        if (!firstItem) return null;
+    // We'll process them in smaller chunks to avoid overwhelming the API and hitting timeouts
+    const chunkArray = (arr: any[], size: number) => {
+      const chunks = [];
+      for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
+      }
+      return chunks;
+    };
 
-        const skuId = firstItem.itemId;
+    const productChunks = chunkArray(allProducts, 20); // Process 20 products at a time
+    const auditedProducts: any[] = [];
 
-        // Fetch Price, Inventory AND SKU Details (Catalog PVT)
-        const priceUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/pricing/prices/${skuId}`;
-        const inventoryUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/logistics/pvt/inventory/skus/${skuId}`;
-        const skuDetailsUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/catalog_system/pvt/sku/stockkeepingunitbyid/${skuId}`;
+    for (const chunk of productChunks) {
+      const chunkResults = await Promise.all(
+        chunk.map(async (product) => {
+          const firstItem = product.items[0];
+          if (!firstItem) return null;
 
-        const [priceRes, invRes, skuRes] = await Promise.all([
-          fetch(priceUrl, { headers: vtexHeaders }),
-          fetch(inventoryUrl, { headers: vtexHeaders }),
-          fetch(skuDetailsUrl, { headers: vtexHeaders }),
-        ]);
+          const skuId = firstItem.itemId;
 
-        let priceData: any = null;
-        if (priceRes.ok) priceData = await priceRes.json();
+          // Fetch Price, Inventory AND SKU Details (Catalog PVT)
+          const priceUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/pricing/prices/${skuId}`;
+          const inventoryUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/logistics/pvt/inventory/skus/${skuId}`;
+          const skuDetailsUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/catalog_system/pvt/sku/stockkeepingunitbyid/${skuId}`;
 
-        let invData: any = null;
-        if (invRes.ok) invData = await invRes.json();
+          const [priceRes, invRes, skuRes] = await Promise.all([
+            fetch(priceUrl, { headers: vtexHeaders }),
+            fetch(inventoryUrl, { headers: vtexHeaders }),
+            fetch(skuDetailsUrl, { headers: vtexHeaders }),
+          ]);
 
-        let skuData: any = null;
-        if (skuRes.ok) skuData = await skuRes.json();
+          let priceData: any = null;
+          if (priceRes.ok) priceData = await priceRes.json();
 
-        // Calculate total stock
-        const stockTotal = invData?.balance?.reduce((acc: number, curr: any) => acc + (curr.totalQuantity || 0), 0) || 0;
+          let invData: any = null;
+          if (invRes.ok) invData = await invRes.json();
 
-        // VTEX source of truth for activation is the SKU/Product Catalog API
-        // We prioritize skuData.IsActive, then fallback to search API
-        const isActive = skuData ? skuData.IsActive : (product.isActive ?? product.IsActive ?? false);
+          let skuData: any = null;
+          if (skuRes.ok) skuData = await skuRes.json();
 
-        // Commercial Condition vs Trade Policy
-        // Commercial Condition is usually a field in the SKU/Product
-        const commercialCondition = skuData?.CommercialConditionId || "N/A";
-        
-        // Trade Policy comes from Pricing
-        const listPrice = priceData?.listPrice || 0;
-        const basePrice = priceData?.basePrice || 0;
+          const stockTotal = invData?.balance?.reduce((acc: number, curr: any) => acc + (curr.totalQuantity || 0), 0) || 0;
+          const isActive = skuData ? skuData.IsActive : (product.isActive ?? product.IsActive ?? false);
+          const commercialCondition = skuData?.CommercialConditionId || "N/A";
+          const listPrice = priceData?.listPrice || 0;
+          const basePrice = priceData?.basePrice || 0;
 
-        return {
-          productName: product.productName,
-          productId: product.productId,
-          skuId: skuId,
-          refId: skuData?.ReferenceId || firstItem.referenceId?.[0]?.Value || "N/A",
-          isActive: isActive,
-          stockTotal: stockTotal,
-          listPrice: listPrice,
-          basePrice: basePrice,
-          tradePolicyId: `Cond: ${commercialCondition}`, // Showing Commercial Condition here as requested
-        };
-      })
-    );
+          return {
+            productName: product.productName,
+            productId: product.productId,
+            skuId: skuId,
+            refId: skuData?.ReferenceId || firstItem.referenceId?.[0]?.Value || "N/A",
+            isActive: isActive,
+            stockTotal: stockTotal,
+            listPrice: listPrice,
+            basePrice: basePrice,
+            tradePolicyId: `Cond: ${commercialCondition}`,
+          };
+        })
+      );
+      auditedProducts.push(...chunkResults.filter(p => p !== null));
+    }
 
     res.json({
-      products: auditedProducts.filter(p => p !== null),
+      products: auditedProducts,
       total: totalCount,
-      page: Number(page),
-      pageSize: pageSize
+      count: auditedProducts.length
     });
   } catch (error: any) {
     console.error("Inspection error:", error);

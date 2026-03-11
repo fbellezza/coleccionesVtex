@@ -3,26 +3,46 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { Search, AlertCircle, Loader2, Database } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, AlertCircle, Loader2, Database, LogOut, User as UserIcon } from 'lucide-react';
 import { ProductsTable } from './components/ProductsTable';
+import { LoginModal } from './components/LoginModal';
 import { AuditedProduct } from './types/vtex';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
+  const [user, setUser] = useState<string | null>(() => localStorage.getItem('vtex_audit_user'));
   const [clusterId, setClusterId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<{ products: AuditedProduct[]; total: number; page: number; pageSize: number } | null>(null);
 
-  const handleSearch = async (page: number = 1) => {
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem('vtex_audit_user', user);
+    } else {
+      localStorage.removeItem('vtex_audit_user');
+    }
+  }, [user]);
+
+  const handleLogin = (username: string) => {
+    setUser(username);
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setResults(null);
+    setClusterId('');
+  };
+
+  const handleSearch = async () => {
     if (!clusterId.trim()) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`/api/inspect?clusterId=${clusterId}&page=${page}`);
+      const response = await fetch(`/api/inspect?clusterId=${clusterId}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -38,6 +58,10 @@ export default function App() {
     }
   };
 
+  if (!user) {
+    return <LoginModal onLogin={handleLogin} />;
+  }
+
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans selection:bg-emerald-100 selection:text-emerald-900">
       {/* Header */}
@@ -52,6 +76,20 @@ export default function App() {
               <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Product Cluster Inspector</p>
             </div>
           </div>
+
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-zinc-100 rounded-full text-zinc-600 text-sm font-medium">
+              <UserIcon size={14} />
+              <span>{user}</span>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+              title="Cerrar Sesión"
+            >
+              <LogOut size={20} />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -64,7 +102,7 @@ export default function App() {
           </div>
           
           <form 
-            onSubmit={(e) => { e.preventDefault(); handleSearch(1); }}
+            onSubmit={(e) => { e.preventDefault(); handleSearch(); }}
             className="flex flex-col sm:flex-row gap-3"
           >
             <div className="relative flex-1">
@@ -114,6 +152,7 @@ export default function App() {
             <div className="flex flex-col items-center justify-center py-24 space-y-4">
               <Loader2 className="animate-spin text-emerald-600" size={48} />
               <p className="text-zinc-500 font-medium">Consultando APIs de VTEX...</p>
+              <p className="text-xs text-zinc-400">Esto puede tardar unos segundos dependiendo del tamaño del cluster.</p>
             </div>
           ) : (
             results && (
@@ -124,9 +163,6 @@ export default function App() {
                 <ProductsTable
                   products={results.products}
                   total={results.total}
-                  currentPage={results.page}
-                  pageSize={results.pageSize}
-                  onPageChange={(page) => handleSearch(page)}
                 />
               </motion.div>
             )
