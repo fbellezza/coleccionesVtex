@@ -56,6 +56,55 @@ app.get("/api/inspect", async (req, res, next) => {
   }
 
   try {
+    // 0. Fetch Commercial Conditions to map IDs to Names
+    // Hardcoded mapping based on user provided table for maximum reliability
+    const hardcodedConditions: Record<string, string> = {
+      "1": "DefaultPardo", "3": "Celulares 4G", "4": "Margen Minimo", "5": "Prueba conector bapro",
+      "6": "HDC Internacional", "7": "3 cuotas sin interes", "8": "12 cuotas sin interes",
+      "9": "6 cuotas sin interes", "10": "18 cuotas sin interes", "11": "Ahora 6",
+      "12": "Ahora 12 .....", "13": "AMEX AHORA 18", "14": "WHIRLPOOL-IMPORTADOS",
+      "15": "WHIRLPOOL-NACIONALES", "16": "AHORA 12 - 3 CSI - Celulares-TV-Informatica",
+      "17": "AHORA 12 - EVENTOS 12 CUOTAS S/I", "18": "Limansky A", "19": "Limansky",
+      "20": "Sin Control de fraude", "21": "Beauty24", "22": "AHORA 12 TV", "24": "Prueba Hipotecario",
+      "25": "Ahora 30 + 6 CSI", "26": "Ahora 30 + 12 CSI", "27": "Celulares Ahora 30",
+      "28": "Celulares Ahora 30 + 3 CSI", "29": "Celulares Ahora 30 + 6 CSI", "30": "Margen 14 C",
+      "31": "Ahora 12 + AMEX 6 CSI", "32": "Borrar 01", "33": "Celulares Ahora 10", "34": "Bulonfer",
+      "35": "GrupoSeni", "36": "WHIRLPOOL 6 CSI", "37": "Limansky B", "38": "FullConfort",
+      "39": "SANTANDER 9 cuotas", "40": "SANTANDER 12 cuotas", "41": "Whirlpool 9 CSI",
+      "43": "Limansky C", "44": "Emood", "45": "Margen 20", "46": "BULONFER - CON INTERES",
+      "47": "BULONFER - 3 CSI", "48": "BULONFER - 6 CSI", "49": "BULONFER - 9 CSI",
+      "50": "BULONFER - 12 CSI", "51": "Ahora 12 - 9 CUOTAS S/I", "52": "Macro 12 CSI",
+      "53": "Margen 14", "54": "AHORA12 - MACRO 12 CSI", "55": "NARANJA 12 CSI",
+      "56": "NARANJA 6 CSI", "57": "GALICIA 18 CSI", "58": "Margen 14 E", "59": "Margen 17",
+      "60": "Visuar 12 cuotas", "61": "Visuar 2 cuotas", "62": "Visuar 3 cuotas",
+      "63": "Visuar 6 cuotas", "64": "Visuar 9 cuotas", "65": "Visuar 1 cuota",
+      "66": "FullConfort 6csi", "67": "Margen 14 B", "68": "Margen 14 D", "69": "Margen 17 B",
+      "70": "Margen 17 C", "71": "Margen 17 D", "72": "Margen 17 E", "73": "Margen 20 B",
+      "74": "Margen 20 C", "75": "Margen 17 F", "76": "Margen 14 F", "77": "Mosconi",
+      "78": "Suenolar", "79": "Margen 20 D", "80": "Margen Minimo B", "81": "Margen Minimo C",
+      "82": "Margen Minimo D", "83": "contado", "84": "Margen Prueba"
+    };
+
+    let conditionsMap: Record<string, string> = { ...hardcodedConditions };
+    
+    try {
+      const conditionsUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/payment/pvt/conditions`;
+      const conditionsResponse = await fetch(conditionsUrl, { headers: vtexHeaders });
+      
+      if (conditionsResponse.ok) {
+        const conditionsData = await conditionsResponse.json();
+        const conditionsArray = Array.isArray(conditionsData) ? conditionsData : [conditionsData];
+        
+        conditionsArray.forEach((c: any) => {
+          if (c && c.id !== undefined && c.name) {
+            conditionsMap[c.id.toString()] = c.name;
+          }
+        });
+      }
+    } catch (e) {
+      console.error("Error fetching conditions from API, using hardcoded only");
+    }
+
     // 1. Search products by cluster - Fetch all products (up to 500)
     let allProducts: any[] = [];
     let from = 0;
@@ -105,8 +154,33 @@ app.get("/api/inspect", async (req, res, next) => {
       }
     }
 
-    // 2. Process products using data already present in Search API
-    // This is 100x faster than fetching SKU by SKU and avoids Vercel timeouts
+    // 2. Fetch SKU details for the products to get commercialConditionId
+    // We limit to the first 100 products to avoid Vercel timeouts and VTEX rate limits
+    const productsToDetail = allProducts.slice(0, 100);
+    const skuDetails = await Promise.all(productsToDetail.map(async (product) => {
+      const skuId = product.items?.[0]?.itemId;
+      if (!skuId) return null;
+      
+      try {
+        const skuUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/catalog_system/pvt/sku/stockkeepingunitbyid/${skuId}`;
+        const skuResponse = await fetch(skuUrl, { headers: vtexHeaders });
+        if (skuResponse.ok) {
+          return await skuResponse.json();
+        }
+      } catch (e) {
+        return null;
+      }
+      return null;
+    }));
+
+    const skuDetailsMap: Record<string, any> = {};
+    skuDetails.forEach(detail => {
+      if (detail && detail.Id) {
+        skuDetailsMap[detail.Id.toString()] = detail;
+      }
+    });
+
+    // 3. Process products using data from Search API + SKU Details
     const auditedProducts = allProducts.map((product) => {
       const firstItem = product.items?.[0];
       if (!firstItem) return null;
@@ -115,25 +189,29 @@ app.get("/api/inspect", async (req, res, next) => {
       const seller = firstItem.sellers?.[0];
       const offer = seller?.commertialOffer;
 
-      // Extract data from the search response (Public API)
-      // This data is usually very accurate and much faster to retrieve
+      // Extract data from the search response
       const stockTotal = offer?.AvailableQuantity ?? 0;
       const listPrice = offer?.ListPrice ?? 0;
       const basePrice = offer?.Price ?? 0;
       
-      // Get the Commercial Condition ID from the SKU item
-      const commercialConditionId = firstItem.commercialConditionId || "N/A";
+      // Get the Commercial Condition ID from the SKU details we fetched
+      const skuDetail = skuDetailsMap[skuId];
+      const commercialConditionId = skuDetail?.CommercialConditionId;
+      
+      const commercialConditionName = commercialConditionId 
+        ? (conditionsMap[commercialConditionId.toString()] || `ID: ${commercialConditionId}`) 
+        : (skuDetail ? "Sin Condición" : "N/A (Cargando...)");
 
       return {
         productName: product.productName,
         productId: product.productId,
         skuId: skuId,
         refId: firstItem.referenceId?.[0]?.Value || product.productReference || "N/A",
-        isActive: product.linkText ? true : false, // Simple heuristic for search API
+        isActive: product.linkText ? true : false,
         stockTotal: stockTotal,
         listPrice: listPrice,
         basePrice: basePrice,
-        commercialCondition: commercialConditionId,
+        commercialCondition: commercialConditionName,
       };
     }).filter(p => p !== null);
 
