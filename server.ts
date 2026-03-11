@@ -117,6 +117,9 @@ app.get("/api/inspect", async (req, res) => {
   }
 });
 
+// Export for Vercel
+export default app;
+
 // Vite middleware for development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -129,9 +132,15 @@ async function startServer() {
     app.use(express.static("dist"));
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  // Only listen if this file is run directly
+  if (process.env.NODE_ENV !== "test") {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
-startServer();
+// Check if we are in a serverless environment (Vercel)
+if (process.env.VERCEL !== '1') {
+  startServer();
+}

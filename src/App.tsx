@@ -44,20 +44,21 @@ export default function App() {
     try {
       const response = await fetch(`/api/inspect?clusterId=${clusterId}`);
       
-      // Check if the response is JSON before parsing
       const contentType = response.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         const text = await response.text();
-        console.error("Non-JSON response received:", text);
-        throw new Error(`El servidor devolvió un error (HTTP ${response.status}). Es posible que la ruta no esté configurada correctamente en Vercel.`);
+        console.error("Non-JSON response received:", text.substring(0, 200));
+        
+        if (text.includes("<!DOCTYPE html>") || text.includes("<html")) {
+          throw new Error("El servidor devolvió una página HTML en lugar de datos. Esto suele indicar un error de configuración en las rutas de la API (404 fallback).");
+        }
+        throw new Error(`Respuesta inesperada del servidor (HTTP ${response.status}).`);
       }
 
       const data = await response.json();
-
       if (!response.ok) {
         throw new Error(data.error || 'Ocurrió un error al consultar los productos');
       }
-
       setResults(data);
     } catch (err: any) {
       setError(err.message);
