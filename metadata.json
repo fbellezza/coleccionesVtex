@@ -1,0 +1,5 @@
+{
+  "name": "VTEX Product Auditor",
+  "description": "Audit products by Cluster/Collection ID, checking stock and pricing across VTEX APIs.",
+  "requestFramePermissions": []
+}
