@@ -43,6 +43,15 @@ export default function App() {
 
     try {
       const response = await fetch(`/api/inspect?clusterId=${clusterId}`);
+      
+      // Check if the response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON response received:", text);
+        throw new Error(`El servidor devolvió un error (HTTP ${response.status}). Es posible que la ruta no esté configurada correctamente en Vercel.`);
+      }
+
       const data = await response.json();
 
       if (!response.ok) {
