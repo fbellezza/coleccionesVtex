@@ -1,7 +1,10 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import fetch from "node-fetch";
+
+// Boot error handling
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
 
 dotenv.config();
 
@@ -160,6 +163,7 @@ export default app;
 // Vite middleware for development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
