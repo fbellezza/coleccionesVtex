@@ -17,12 +17,25 @@ const VTEX_APP_TOKEN = process.env.VTEX_APP_TOKEN;
 const vtexHeaders = {
   "Content-Type": "application/json",
   "Accept": "application/json",
+  "User-Agent": "VTEX-Cluster-Auditor",
   "X-VTEX-API-AppKey": VTEX_APP_KEY || "",
   "X-VTEX-API-AppToken": VTEX_APP_TOKEN || "",
 };
 
+// Health check route
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    env: {
+      account: !!VTEX_ACCOUNT,
+      key: !!VTEX_APP_KEY,
+      token: !!VTEX_APP_TOKEN
+    }
+  });
+});
+
 // API Routes
-app.get("/api/inspect", async (req, res) => {
+app.get("/api/inspect", async (req, res, next) => {
   const { clusterId, page = "1" } = req.query;
 
   if (!clusterId) {
@@ -30,7 +43,13 @@ app.get("/api/inspect", async (req, res) => {
   }
 
   if (!VTEX_ACCOUNT || !VTEX_APP_KEY || !VTEX_APP_TOKEN) {
-    return res.status(500).json({ error: "VTEX credentials not configured in server" });
+    const missing = [];
+    if (!VTEX_ACCOUNT) missing.push("VTEX_ACCOUNT");
+    if (!VTEX_APP_KEY) missing.push("VTEX_APP_KEY");
+    if (!VTEX_APP_TOKEN) missing.push("VTEX_APP_TOKEN");
+    return res.status(500).json({ 
+      error: `Faltan variables de entorno en el servidor: ${missing.join(", ")}. Asegúrate de configurarlas en el panel de Vercel.` 
+    });
   }
 
   try {
@@ -52,24 +71,34 @@ app.get("/api/inspect", async (req, res) => {
     allProducts = [...firstBatch];
 
     const resourcesHeader = firstResponse.headers.get("resources") || "";
-    totalCount = parseInt(resourcesHeader.split("/")[1]) || allProducts.length;
+    if (resourcesHeader.includes("/")) {
+      totalCount = parseInt(resourcesHeader.split("/")[1]) || allProducts.length;
+    } else {
+      totalCount = allProducts.length;
+    }
 
     // Fetch remaining products if any (limit to 500 total for performance)
     const maxProducts = 500;
     const effectiveTotal = Math.min(totalCount, maxProducts);
 
-    while (allProducts.length < effectiveTotal) {
+    // Safety check to avoid infinite loops
+    let iterations = 0;
+    while (allProducts.length < effectiveTotal && iterations < 10) {
+      iterations++;
       from = allProducts.length;
       to = Math.min(from + 49, effectiveTotal - 1);
       
+      if (from >= to) break;
+
       const nextUrl = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br/api/catalog_system/pub/products/search?fq=productClusterIds:${clusterId}&_from=${from}&_to=${to}`;
       const nextResponse = await fetch(nextUrl, { headers: vtexHeaders });
       
       if (nextResponse.ok) {
         const nextBatch = await nextResponse.json() as any[];
+        if (!nextBatch || nextBatch.length === 0) break;
         allProducts = [...allProducts, ...nextBatch];
       } else {
-        break; // Stop if error
+        break; 
       }
     }
 
@@ -112,9 +141,17 @@ app.get("/api/inspect", async (req, res) => {
       count: auditedProducts.length
     });
   } catch (error: any) {
-    console.error("Inspection error:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
+});
+
+// Global Error Handler
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("Global error handler:", err);
+  res.status(500).json({ 
+    error: err.message || "Internal Server Error",
+    stack: process.env.NODE_ENV === "development" ? err.stack : undefined
+  });
 });
 
 // Export for Vercel

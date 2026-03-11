@@ -47,17 +47,17 @@ export default function App() {
       const contentType = response.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         const text = await response.text();
-        console.error("Non-JSON response received:", text.substring(0, 200));
+        console.error("Non-JSON response received:", text);
         
         if (text.includes("<!DOCTYPE html>") || text.includes("<html")) {
-          throw new Error("El servidor devolvió una página HTML en lugar de datos. Esto suele indicar un error de configuración en las rutas de la API (404 fallback).");
+          throw new Error("El servidor devolvió una página HTML (Error 500). Esto suele ser un 'Runtime Error' en Vercel. Revisa los logs en el dashboard de Vercel.");
         }
-        throw new Error(`Respuesta inesperada del servidor (HTTP ${response.status}).`);
+        throw new Error(`Error del servidor (HTTP ${response.status}): ${text.substring(0, 100)}...`);
       }
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || 'Ocurrió un error al consultar los productos');
+        throw new Error(data.error || `Error del servidor (HTTP ${response.status})`);
       }
       setResults(data);
     } catch (err: any) {
