@@ -121,9 +121,8 @@ app.get("/api/inspect", async (req, res, next) => {
       const listPrice = offer?.ListPrice ?? 0;
       const basePrice = offer?.Price ?? 0;
       
-      // In the search API, we don't have the CommercialConditionId directly
-      // but we can use the TradePolicy or a generic indicator
-      const tradePolicyId = seller?.sellerId ? `Seller: ${seller.sellerId}` : "Cond: N/A";
+      // Get the Commercial Condition ID from the SKU item
+      const commercialConditionId = firstItem.commercialConditionId || "N/A";
 
       return {
         productName: product.productName,
@@ -134,7 +133,7 @@ app.get("/api/inspect", async (req, res, next) => {
         stockTotal: stockTotal,
         listPrice: listPrice,
         basePrice: basePrice,
-        tradePolicyId: tradePolicyId,
+        commercialCondition: commercialConditionId,
       };
     }).filter(p => p !== null);
 

@@ -23,7 +23,7 @@ export const ProductsTable: React.FC<ProductsTableProps> = ({
       p.productName.toLowerCase().includes(term) ||
       p.skuId.toLowerCase().includes(term) ||
       p.refId.toLowerCase().includes(term) ||
-      p.tradePolicyId.toLowerCase().includes(term)
+      p.commercialCondition.toLowerCase().includes(term)
     );
   }, [products, searchTerm]);
 
@@ -50,7 +50,7 @@ export const ProductsTable: React.FC<ProductsTableProps> = ({
       p.stockTotal,
       p.listPrice,
       p.basePrice,
-      p.tradePolicyId
+      p.commercialCondition
     ]);
 
     const csvContent = [
@@ -153,7 +153,7 @@ export const ProductsTable: React.FC<ProductsTableProps> = ({
                     ${product.basePrice.toLocaleString()}
                   </td>
                   <td className="px-6 py-4 text-sm text-zinc-600">
-                    {product.tradePolicyId}
+                    {product.commercialCondition}
                   </td>
                 </tr>
               ))

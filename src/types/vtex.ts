@@ -27,6 +27,7 @@ export interface VTEXItem {
   nameComplete: string;
   complementName: string;
   ean: string;
+  commercialConditionId: string;
   referenceId: Array<{ Key: string; Value: string }>;
   measurementUnit: string;
   unitMultiplier: number;
@@ -105,5 +106,5 @@ export interface AuditedProduct {
   stockTotal: number;
   listPrice: number;
   basePrice: number;
-  tradePolicyId: string;
+  commercialCondition: string;
 }
